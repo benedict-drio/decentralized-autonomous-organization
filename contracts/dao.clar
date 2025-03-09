@@ -403,3 +403,71 @@
     )
     true
 )
+
+;; Improved Proposal Management with different proposal types
+(define-public (create-proposal 
+                (title (string-ascii 100)) 
+                (description (string-ascii 500)) 
+                (proposal-type (string-ascii 20))
+                (amount uint)
+                (recipient principal)
+                (parameter (optional (string-ascii 20)))
+                (parameter-value (optional uint))
+                (contract-call-info (optional {contract: principal, function: (string-ascii 30)})))
+    (let (
+        (proposal-id (+ (var-get proposal-count) u1))
+        (proposer-stake (calculate-voting-power tx-sender))
+    )
+    (begin
+        (asserts! (is-member tx-sender) ERR-NOT-AUTHORIZED)
+        (asserts! (>= proposer-stake (var-get min-proposal-amount)) ERR-INSUFFICIENT-BALANCE)
+        (asserts! (validate-string-ascii title) ERR-INVALID-TITLE)
+        (asserts! (validate-string-ascii description) ERR-INVALID-DESCRIPTION)
+        (asserts! (validate-proposal-type proposal-type) ERR-PROPOSAL-TYPE-INVALID)
+        
+        ;; Type-specific validations
+        (if (is-eq proposal-type PROPOSAL-TYPE-TRANSFER)
+            (begin
+                (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+                (asserts! (validate-principal recipient) ERR-INVALID-RECIPIENT)
+            )
+            true
+        )
+        
+        (if (is-eq proposal-type PROPOSAL-TYPE-PARAMETER)
+            (begin
+                (asserts! (is-some parameter) ERR-INVALID-PARAMETER)
+                (asserts! (is-some parameter-value) ERR-INVALID-PARAMETER)
+                (asserts! (validate-parameter (unwrap! parameter ERR-INVALID-PARAMETER)) ERR-INVALID-PARAMETER)
+            )
+            true
+        )
+        
+        (if (is-eq proposal-type PROPOSAL-TYPE-CONTRACT-CALL)
+            (asserts! (is-some contract-call-info) ERR-INVALID-PARAMETER)
+            true
+        )
+        
+        (map-set proposals proposal-id {
+            proposer: tx-sender,
+            title: title,
+            description: description,
+            amount: amount,
+            recipient: recipient,
+            start-block: block-height,
+            end-block: (+ block-height (var-get proposal-duration)),
+            execution-block: (+ block-height (var-get proposal-duration) (var-get execution-delay)),
+            yes-votes: u0,
+            no-votes: u0,
+            status: STATUS-ACTIVE,
+            executed: false,
+            proposal-type: proposal-type,
+            parameter: parameter,
+            contract-call: contract-call-info
+        })
+        
+        (var-set proposal-count proposal-id)
+        (emit-event "proposal-created" (concat "Proposal ID: " (to-ascii (unwrap-panic (to-uint-string proposal-id)))))
+        (ok proposal-id)
+    ))
+)
