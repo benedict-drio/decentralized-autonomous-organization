@@ -534,3 +534,68 @@
         (ok true)
     ))
 )
+
+;; Enhanced Proposal Execution with timelock and different types
+(define-public (execute-proposal (proposal-id uint))
+    (let (
+        (proposal (unwrap! (map-get? proposals proposal-id) ERR-PROPOSAL-NOT-FOUND))
+    )
+    (begin
+        (asserts! (>= block-height (get end-block proposal)) ERR-PROPOSAL-NOT-ACTIVE)
+        (asserts! (>= block-height (get execution-block proposal)) ERR-TIMELOCK-ACTIVE)
+        (asserts! (not (get executed proposal)) ERR-INVALID-STATUS)
+        
+        (let (
+            (quorum-requirement (/ (* (var-get total-staked) (var-get quorum-threshold)) u1000))
+            (proposal-passed (and
+                (>= (get yes-votes proposal) quorum-requirement)
+                (> (get yes-votes proposal) (get no-votes proposal))
+            ))
+        )
+            (if proposal-passed
+                (begin
+                    ;; Execute based on proposal type
+                    (if (is-eq (get proposal-type proposal) PROPOSAL-TYPE-TRANSFER)
+                        (try! (as-contract (stx-transfer? (get amount proposal) 
+                            (as-contract tx-sender) 
+                            (get recipient proposal))))
+                        true
+                    )
+                    
+                    (if (is-eq (get proposal-type proposal) PROPOSAL-TYPE-PARAMETER)
+                        (execute-parameter-change 
+                            (unwrap! (get parameter proposal) ERR-INVALID-PARAMETER)
+                            (unwrap! (get parameter proposal) ERR-INVALID-PARAMETER))
+                        true
+                    )
+                    
+                    (if (is-eq (get proposal-type proposal) PROPOSAL-TYPE-CONTRACT-CALL)
+                        ;; Contract calls would need a more sophisticated implementation
+                        ;; with trait support, but this is a placeholder
+                        (emit-event "contract-call" "Contract call executed")
+                        true
+                    )
+                    
+                    (map-set proposals proposal-id 
+                        (merge proposal {
+                            status: STATUS-EXECUTED,
+                            executed: true
+                        })
+                    )
+                    (emit-event "proposal-executed" (concat "Proposal: " (to-ascii (unwrap-panic (to-uint-string proposal-id)))))
+                    (ok true)
+                )
+                (begin
+                    (map-set proposals proposal-id 
+                        (merge proposal {
+                            status: STATUS-REJECTED,
+                            executed: true
+                        })
+                    )
+                    (emit-event "proposal-rejected" (concat "Proposal: " (to-ascii (unwrap-panic (to-uint-string proposal-id)))))
+                    (ok true)
+                )
+            )
+        )
+    ))
+)
