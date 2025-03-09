@@ -284,3 +284,78 @@
         )
     )
 )
+
+(define-public (request-unstake (amount uint))
+    (let (
+        (current-balance (unwrap! (map-get? members tx-sender) ERR-NOT-AUTHORIZED))
+    )
+    (begin
+        (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+        (asserts! (>= (get staked-amount current-balance) amount) ERR-INSUFFICIENT-BALANCE)
+        
+        (map-set members tx-sender (merge current-balance {
+            cooldown-end-block: (+ block-height (var-get unstake-cooldown))
+        }))
+        
+        (emit-event "unstake-requested" (concat "Amount: " (to-ascii (unwrap-panic (to-uint-string amount)))))
+        (ok true)
+    ))
+)
+
+(define-public (unstake-tokens (amount uint))
+    (let (
+        (current-balance (unwrap! (map-get? members tx-sender) ERR-NOT-AUTHORIZED))
+    )
+    (begin
+        (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+        (asserts! (>= (get staked-amount current-balance) amount) ERR-INSUFFICIENT-BALANCE)
+        (asserts! (>= block-height (get cooldown-end-block current-balance)) ERR-COOLDOWN-ACTIVE)
+        
+        (try! (as-contract (stx-transfer? amount (as-contract tx-sender) tx-sender)))
+        
+        (map-set members tx-sender (merge current-balance {
+            staked-amount: (- (get staked-amount current-balance) amount),
+            cooldown-end-block: u0
+        }))
+        
+        ;; Update delegation if member has delegated
+        (match (get delegated-to current-balance)
+            delegated-principal (update-delegation delegated-principal amount false)
+            true
+        )
+        
+        (var-set total-staked (- (var-get total-staked) amount))
+        (emit-event "tokens-unstaked" (concat "Amount: " (to-ascii (unwrap-panic (to-uint-string amount)))))
+        (ok true)
+    ))
+)
+
+;; Delegation system
+(define-public (delegate-to (delegate principal))
+    (let (
+        (member-info (unwrap! (map-get? members tx-sender) ERR-INACTIVE-MEMBER))
+        (staked-amount (get staked-amount member-info))
+    )
+    (begin
+        (asserts! (not (is-eq tx-sender delegate)) ERR-SELF-DELEGATION)
+        (asserts! (is-member delegate) ERR-DELEGATE-NOT-FOUND)
+        (asserts! (> staked-amount u0) ERR-INSUFFICIENT-BALANCE)
+        
+        ;; Remove from previous delegate if exists
+        (match (get delegated-to member-info)
+            previous-delegate (update-delegation previous-delegate staked-amount false)
+            true
+        )
+        
+        ;; Add to new delegate
+        (update-delegation delegate staked-amount true)
+        
+        ;; Update member record
+        (map-set members tx-sender (merge member-info {
+            delegated-to: (some delegate)
+        }))
+        
+        (emit-event "delegation-changed" (concat "Delegated to: " (to-ascii (unwrap-panic (to-consensus-buff? delegate)))))
+        (ok true)
+    ))
+)
