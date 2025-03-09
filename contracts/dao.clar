@@ -114,3 +114,81 @@
         contract-call: (optional {contract: principal, function: (string-ascii 30)})
     }
 )
+
+;; Records member votes on proposals
+(define-map votes 
+    {proposal-id: uint, voter: principal} 
+    {vote: bool, power: uint}
+)
+
+;; Authorization Functions - Enhanced with role checks
+(define-private (is-dao-owner)
+    (is-eq tx-sender (var-get dao-owner))
+)
+
+(define-private (is-dao-contract)
+    (is-eq tx-sender (as-contract tx-sender))
+)
+
+(define-private (is-member (address principal))
+    (match (map-get? members address)
+        member (> (get staked-amount member) u0)
+        false
+    )
+)
+
+;; Enhanced Validation Functions
+(define-private (validate-string-ascii (input (string-ascii 500)))
+    (and 
+        (not (is-eq input ""))
+        (<= (len input) u500)
+    )
+)
+
+(define-private (validate-principal (address principal))
+    (and
+        (not (is-eq address tx-sender))
+        (not (is-eq address (as-contract tx-sender)))
+    )
+)
+
+(define-private (validate-proposal-type (proposal-type (string-ascii 20)))
+    (or 
+        (is-eq proposal-type PROPOSAL-TYPE-TRANSFER)
+        (is-eq proposal-type PROPOSAL-TYPE-PARAMETER)
+        (is-eq proposal-type PROPOSAL-TYPE-CONTRACT-CALL)
+    )
+)
+
+(define-private (validate-parameter (parameter (string-ascii 20)))
+    (or 
+        (is-eq parameter "quorum-threshold")
+        (is-eq parameter "proposal-duration")
+        (is-eq parameter "min-proposal-amount")
+        (is-eq parameter "timelock-period")
+        (is-eq parameter "unstake-cooldown")
+        (is-eq parameter "execution-delay")
+    )
+)
+
+;; Timelock Management
+(define-private (set-timelock (operation (string-ascii 20)) (parameter (optional (string-ascii 20))) (value (optional uint)))
+    (map-set timelocks tx-sender {
+        operation: operation,
+        end-block: (+ block-height (var-get timelock-period)),
+        data: (match (and parameter value)
+            (and (some param) (some val)) (some {parameter: param, value: val})
+            none
+        )
+    })
+)
+
+(define-private (check-timelock (operation (string-ascii 20)))
+    (match (map-get? timelocks tx-sender)
+        timelock (and 
+            (is-eq (get operation timelock) operation)
+            (>= block-height (get end-block timelock))
+        )
+        false
+    )
+)
