@@ -471,3 +471,66 @@
         (ok proposal-id)
     ))
 )
+
+;; Enhanced Voting System with delegation support
+(define-public (vote (proposal-id uint) (vote-for bool))
+    (let (
+        (proposal (unwrap! (map-get? proposals proposal-id) ERR-PROPOSAL-NOT-FOUND))
+        (effective-voter (get-effective-voter tx-sender))
+        (voter-power (calculate-voting-power tx-sender))
+    )
+    (begin
+        (asserts! (is-member tx-sender) ERR-NOT-AUTHORIZED)
+        (asserts! (is-eq (get status proposal) STATUS-ACTIVE) ERR-PROPOSAL-NOT-ACTIVE)
+        (asserts! (<= block-height (get end-block proposal)) ERR-PROPOSAL-EXPIRED)
+        (asserts! (is-none (map-get? votes {proposal-id: proposal-id, voter: effective-voter})) ERR-ALREADY-VOTED)
+        (asserts! (> voter-power u0) ERR-INSUFFICIENT-BALANCE)
+        
+        ;; For delegated votes, use the effective voter
+        (if (not (is-eq tx-sender effective-voter))
+            (begin
+                (map-set votes 
+                    {proposal-id: proposal-id, voter: effective-voter} 
+                    {vote: vote-for, power: voter-power})
+                
+                (map-set proposals proposal-id 
+                    (merge proposal 
+                        {
+                            yes-votes: (if vote-for
+                                (+ (get yes-votes proposal) voter-power)
+                                (get yes-votes proposal)
+                            ),
+                            no-votes: (if vote-for
+                                (get no-votes proposal)
+                                (+ (get no-votes proposal) voter-power)
+                            )
+                        }
+                    )
+                )
+            )
+            (begin
+                (map-set votes 
+                    {proposal-id: proposal-id, voter: tx-sender} 
+                    {vote: vote-for, power: voter-power})
+                
+                (map-set proposals proposal-id 
+                    (merge proposal 
+                        {
+                            yes-votes: (if vote-for
+                                (+ (get yes-votes proposal) voter-power)
+                                (get yes-votes proposal)
+                            ),
+                            no-votes: (if vote-for
+                                (get no-votes proposal)
+                                (+ (get no-votes proposal) voter-power)
+                            )
+                        }
+                    )
+                )
+            )
+        )
+        
+        (emit-event "vote-cast" (concat "Proposal: " (to-ascii (unwrap-panic (to-uint-string proposal-id)))))
+        (ok true)
+    ))
+)
