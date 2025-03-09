@@ -192,3 +192,95 @@
         false
     )
 )
+
+;; Governance Helper Functions - Enhanced for delegation support
+(define-private (get-proposal-status (proposal-id uint))
+    (match (map-get? proposals proposal-id)
+        proposal (get status proposal)
+        "NOT_FOUND"
+    )
+)
+
+(define-private (calculate-voting-power (address principal))
+    (let (
+        (direct-power (match (map-get? members address)
+            member (get staked-amount member)
+            u0
+        ))
+        (delegated-power (match (map-get? delegations address)
+            delegation (get total-delegated delegation)
+            u0
+        ))
+    )
+    (+ direct-power delegated-power))
+)
+
+(define-private (get-effective-voter (address principal))
+    (match (map-get? members address)
+        member (match (get delegated-to member)
+            delegated delegated
+            address)
+        address
+    )
+)
+
+;; Event logging for important state changes
+(define-private (emit-event (event-name (string-ascii 50)) (data (string-ascii 100)))
+    (print {event: event-name, data: data, sender: tx-sender, block: block-height})
+)
+
+;; Administrative Functions - With timelock for safety
+(define-public (initialize (new-owner principal))
+    (begin
+        (asserts! (is-dao-owner) ERR-NOT-AUTHORIZED)
+        (asserts! (validate-principal new-owner) ERR-INVALID-OWNER)
+        (asserts! (check-timelock "initialize") ERR-TIMELOCK-ACTIVE)
+        
+        (var-set dao-owner new-owner)
+        (emit-event "owner-changed" (concat "New owner: " (to-ascii (unwrap-panic (to-consensus-buff? new-owner)))))
+        (ok true)
+    )
+)
+
+(define-public (request-owner-change (new-owner principal))
+    (begin
+        (asserts! (is-dao-owner) ERR-NOT-AUTHORIZED)
+        (asserts! (validate-principal new-owner) ERR-INVALID-OWNER)
+        
+        (set-timelock "initialize" none none)
+        (emit-event "owner-change-requested" (concat "Requested new owner: " (to-ascii (unwrap-panic (to-consensus-buff? new-owner)))))
+        (ok true)
+    )
+)
+
+;; Enhanced membership management with delegation support
+(define-public (stake-tokens (amount uint))
+    (begin
+        (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+        (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+        
+        (let (
+            (current-balance (default-to 
+                {staked-amount: u0, last-reward-block: block-height, rewards-claimed: u0, delegated-to: none, cooldown-end-block: u0} 
+                (map-get? members tx-sender)))
+        )
+            (map-set members tx-sender {
+                staked-amount: (+ (get staked-amount current-balance) amount),
+                last-reward-block: block-height,
+                rewards-claimed: (get rewards-claimed current-balance),
+                delegated-to: (get delegated-to current-balance),
+                cooldown-end-block: (get cooldown-end-block current-balance)
+            })
+            
+            ;; Update delegation if member has delegated
+            (match (get delegated-to current-balance)
+                delegated-principal (update-delegation delegated-principal amount true)
+                true
+            )
+            
+            (var-set total-staked (+ (var-get total-staked) amount))
+            (emit-event "tokens-staked" (concat "Amount: " (to-ascii (unwrap-panic (to-uint-string amount)))))
+            (ok true)
+        )
+    )
+)
