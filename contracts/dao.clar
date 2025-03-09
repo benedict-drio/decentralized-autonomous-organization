@@ -359,3 +359,47 @@
         (ok true)
     ))
 )
+
+(define-public (undelegate)
+    (let (
+        (member-info (unwrap! (map-get? members tx-sender) ERR-INACTIVE-MEMBER))
+        (staked-amount (get staked-amount member-info))
+    )
+    (begin
+        (match (get delegated-to member-info)
+            delegate (begin
+                (update-delegation delegate staked-amount false)
+                (map-set members tx-sender (merge member-info {
+                    delegated-to: none
+                }))
+                (emit-event "delegation-removed" "Delegation removed")
+                (ok true)
+            )
+            (err ERR-DELEGATE-NOT-FOUND)
+        )
+    ))
+)
+
+(define-private (update-delegation (delegate principal) (amount uint) (is-adding bool))
+    (match (map-get? delegations delegate)
+        delegation-info 
+        (if is-adding
+            (map-set delegations delegate {
+                total-delegated: (+ (get total-delegated delegation-info) amount),
+                delegators: (get delegators delegation-info)
+            })
+            (map-set delegations delegate {
+                total-delegated: (- (get total-delegated delegation-info) amount),
+                delegators: (get delegators delegation-info)
+            })
+        )
+        (if is-adding
+            (map-set delegations delegate {
+                total-delegated: amount,
+                delegators: (list tx-sender)
+            })
+            true
+        )
+    )
+    true
+)
