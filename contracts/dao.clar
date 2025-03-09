@@ -599,3 +599,114 @@
         )
     ))
 )
+
+(define-private (execute-parameter-change (parameter (string-ascii 20)) (value uint))
+    (begin
+        (if (is-eq parameter "quorum-threshold") 
+            (begin
+                (asserts! (> value u0) ERR-ZERO-QUORUM)
+                (var-set quorum-threshold value)
+            )
+            true
+        )
+        
+        (if (is-eq parameter "proposal-duration") 
+            (var-set proposal-duration value)
+            true
+        )
+        
+        (if (is-eq parameter "min-proposal-amount") 
+            (var-set min-proposal-amount value)
+            true
+        )
+        
+        (if (is-eq parameter "timelock-period") 
+            (var-set timelock-period value)
+            true
+        )
+        
+        (if (is-eq parameter "unstake-cooldown") 
+            (var-set unstake-cooldown value)
+            true
+        )
+        
+        (if (is-eq parameter "execution-delay") 
+            (var-set execution-delay value)
+            true
+        )
+        
+        (emit-event "parameter-changed" (concat parameter (concat ": " (to-ascii (unwrap-panic (to-uint-string value))))))
+        true
+    )
+)
+
+(define-public (cancel-proposal (proposal-id uint))
+    (let (
+        (proposal (unwrap! (map-get? proposals proposal-id) ERR-PROPOSAL-NOT-FOUND))
+    )
+    (begin
+        (asserts! (is-eq (get proposer proposal) tx-sender) ERR-NOT-AUTHORIZED)
+        (asserts! (is-eq (get status proposal) STATUS-ACTIVE) ERR-PROPOSAL-NOT-ACTIVE)
+        
+        (map-set proposals proposal-id 
+            (merge proposal {
+                status: STATUS-CANCELLED,
+                executed: true
+            })
+        )
+        (emit-event "proposal-cancelled" (concat "Proposal: " (to-ascii (unwrap-panic (to-uint-string proposal-id)))))
+        (ok true)
+    ))
+)
+
+;; Helper function to convert uint to string for event logs
+(define-private (to-uint-string (value uint))
+    (some (concat "u" (uint-to-ascii value)))
+)
+
+(define-private (uint-to-ascii (value uint))
+    (if (< value u10)
+        (unwrap-panic (element-at "0123456789" value))
+        (concat (uint-to-ascii (/ value u10)) 
+                (unwrap-panic (element-at "0123456789" (mod value u10))))
+    )
+)
+
+;; Read-Only Functions - Enhanced with more comprehensive data
+(define-read-only (get-member-info (address principal))
+    (map-get? members address)
+)
+
+(define-read-only (get-delegation-info (address principal))
+    (map-get? delegations address)
+)
+
+(define-read-only (get-proposal-info (proposal-id uint))
+    (map-get? proposals proposal-id)
+)
+
+(define-read-only (get-vote-info (proposal-id uint) (voter principal))
+    (map-get? votes {proposal-id: proposal-id, voter: voter})
+)
+
+(define-read-only (get-timelock-info (address principal))
+    (map-get? timelocks address)
+)
+
+(define-read-only (get-effective-voting-power (address principal))
+    (calculate-voting-power address)
+)
+
+(define-read-only (get-dao-info)
+    {
+        total-staked: (var-get total-staked),
+        proposal-count: (var-get proposal-count),
+        quorum-threshold: (var-get quorum-threshold),
+        min-proposal-amount: (var-get min-proposal-amount),
+        proposal-duration: (var-get proposal-duration),
+        timelock-period: (var-get timelock-period),
+        unstake-cooldown: (var-get unstake-cooldown),
+        execution-delay: (var-get execution-delay),
+        governance-token: (var-get governance-token)
+    }
+)
